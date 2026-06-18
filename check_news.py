@@ -9,7 +9,7 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
 MINIMAX_API_KEY     = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL", "MiniMax-M3")
+MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL") or "MiniMax-M3"
 MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
 SEEN_FILE           = "seen_articles.json"
 
