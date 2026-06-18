@@ -9,6 +9,7 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
 ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL     = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
 SEEN_FILE           = "seen_articles.json"
 
 RSS_FEEDS = [
@@ -92,7 +93,7 @@ def score_with_haiku(title: str) -> dict:
         "content-type": "application/json",
     }
     body = {
-        "model": "claude-haiku-4-5-20251001",
+        "model": ANTHROPIC_MODEL,
         "max_tokens": 100,
         "system": HAIKU_SYSTEM,
         "messages": [
