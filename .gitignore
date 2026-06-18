@@ -1,0 +1,4 @@
+seen_articles.json
+__pycache__/
+*.pyc
+.env
