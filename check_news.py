@@ -13,7 +13,6 @@ MINIMAX_API_KEY     = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL") or "MiniMax-M3"
 MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
 ALLOW_ANY_TIME      = os.environ.get("ALLOW_ANY_TIME", "false").lower() == "true"
-SEEN_FILE           = "seen_articles.json"
 PACIFIC_TZ          = ZoneInfo("America/Los_Angeles")
 MAX_DAILY_ALERTS    = 3
 
@@ -23,40 +22,29 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=SK+Hynix+HBM+DRAM&hl=en-US&gl=US&ceid=US:en",
 ]
 
-# ── Step 2: MiniMax scoring ──────────────────────────────────────────────────
-SCORE_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
-Your job is to assess whether a news headline about SK Hynix is likely to
-materially move its stock price (up or down).
+# ── Step 2: MiniMax move estimate ────────────────────────────────────────────
+ESTIMATE_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
+Your job is to estimate how much a news headline about SK Hynix could move the
+stock price over the next trading session.
 
 Respond ONLY with a JSON object like:
-{"score": 8, "reason": "one-line reason", "direction": "bullish"}
+{"direction": "bullish", "move_pct_low": 0.8, "move_pct_high": 1.4, "confidence": "medium", "reason": "one-line reason"}
 
 Rules:
-- score: 1-10 (1 = noise, 10 = major market-moving event)
+- move_pct_low and move_pct_high are absolute percent move estimates, not signed
 - direction: "bullish", "bearish", or "neutral"
-- reason: max 12 words explaining the score
-- Score 7+ = major event worth alerting
-- Score 4-6 = moderate news, skip
-- Score 1-3 = noise, skip
+- confidence: "low", "medium", or "high"
+- reason: max 12 words explaining the estimate
+- If you cannot estimate with reasonable confidence, set move_pct_low and move_pct_high to null
+- Do not invent precision; prefer null over a guess that is not defensible
+- If the article is likely noise or already reflected in price, use low confidence and null estimates
 
-High-score examples (7+):
-- Quarterly earnings beat/miss
-- HBM supply deal with Nvidia/Apple
-- US export restriction to China announced
-- Analyst upgrade/downgrade with big target change
-- DRAM pricing collapse or surge reported
-- Major fab capacity change
+Good estimates should reflect the next trading session's likely swing, not a long-term target."""
 
-Low-score examples (1-3):
-- Generic industry commentary
-- Reposted old news
-- Minor executive quotes
-- Unrelated market roundups"""
-
-def score_with_minimax(title: str) -> dict:
-    """Call MiniMax to score the headline. Returns score dict or None on error."""
+def estimate_with_minimax(title: str) -> dict:
+    """Call MiniMax to estimate the price move for the headline."""
     if not MINIMAX_API_KEY:
-        print("  ⚠️  MiniMax API key missing; using fallback alert")
+        print("  ⚠️  MiniMax API key missing; using fallback estimate")
         return None
 
     headers = {
@@ -67,7 +55,7 @@ def score_with_minimax(title: str) -> dict:
         "model": MINIMAX_MODEL,
         "max_tokens": 100,
         "messages": [
-            {"role": "system", "content": SCORE_SYSTEM},
+            {"role": "system", "content": ESTIMATE_SYSTEM},
             {"role": "user", "content": f"Headline: {title}"},
         ],
     }
@@ -102,7 +90,7 @@ def score_with_minimax(title: str) -> dict:
         if response_text:
             print(f"  ⚠️  MiniMax scoring failed: {e} | {response_text}")
         else:
-            print(f"  ⚠️  MiniMax scoring failed: {e}")
+            print(f"  ⚠️  MiniMax estimate failed: {e}")
         return None
 
 
@@ -119,21 +107,37 @@ def article_pacific_date(entry):
     published_dt = datetime(*parsed[:6], tzinfo=timezone.utc)
     return published_dt.astimezone(PACIFIC_TZ).date()
 
-def parse_score(score_data: dict) -> int:
+def parse_confidence(confidence: str) -> float:
+    mapping = {"high": 1.0, "medium": 0.7, "low": 0.4}
+    return mapping.get(str(confidence).lower(), 0.0)
+
+def parse_move_pct(estimate_data: dict) -> float:
     try:
-        return int(score_data.get("score", 0))
+        low = estimate_data.get("move_pct_low")
+        high = estimate_data.get("move_pct_high")
+        if low is None or high is None:
+            single = estimate_data.get("move_pct")
+            if single is None:
+                return 0.0
+            return float(single)
+        return (float(low) + float(high)) / 2.0
     except Exception:
-        return 0
+        return 0.0
 
-def load_seen() -> set:
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    return set()
+def format_move_estimate(estimate_data: dict) -> str:
+    low = estimate_data.get("move_pct_low")
+    high = estimate_data.get("move_pct_high")
+    single = estimate_data.get("move_pct")
 
-def save_seen(seen: set):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f)
+    if low is None or high is None:
+        if single is None:
+            return "Estimated move: unavailable"
+        return f"Estimated move: ~{float(single):.1f}%"
+
+    if abs(float(low) - float(high)) < 0.2:
+        return f"Estimated move: ~{(float(low) + float(high)) / 2.0:.1f}%"
+
+    return f"Estimated move: {float(low):.1f}% to {float(high):.1f}%"
 
 def send_telegram(message: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -148,7 +152,7 @@ def send_telegram(message: str):
 
 DIRECTION_EMOJI = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}
 
-def format_message(entry, score_data: dict) -> str:
+def format_message(entry, estimate_data: dict) -> str:
     title     = entry.get("title", "No title")
     link      = entry.get("link", "")
     source    = entry.get("source", {}).get("title", "Unknown source")
@@ -160,15 +164,16 @@ def format_message(entry, score_data: dict) -> str:
     except Exception:
         pass
 
-    score     = score_data.get("score", "?")
-    reason    = score_data.get("reason", "")
-    direction = score_data.get("direction", "neutral")
+    reason    = estimate_data.get("reason", "")
+    direction = estimate_data.get("direction", "neutral")
+    confidence = estimate_data.get("confidence", "")
     emoji     = DIRECTION_EMOJI.get(direction, "⚪")
 
     return (
         f"🚨 <b>SK Hynix Major News Alert</b>\n\n"
         f"<b>{title}</b>\n\n"
-        f"{emoji} <b>{direction.capitalize()}</b> · Score {score}/10\n"
+        f"{emoji} <b>{direction.capitalize()}</b> · {format_move_estimate(estimate_data)}\n"
+        f"{('Confidence: ' + str(confidence).capitalize()) if confidence else ''}\n"
         f"💡 {reason}\n\n"
         f"🗞 {source} · {published}\n\n"
         f"🔗 <a href='{link}'>Read article</a>"
@@ -178,14 +183,12 @@ def format_message(entry, score_data: dict) -> str:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    seen        = load_seen()
     alerted     = 0
     scored      = 0
 
     now_pacific = datetime.now(PACIFIC_TZ)
     if not ALLOW_ANY_TIME and now_pacific.hour != 9:
         print(f"  ⏭️  Not 9am Pacific yet ({now_pacific.strftime('%H:%M %Z')}); exiting")
-        save_seen(seen)
         return
 
     target_date = now_pacific.date() - timedelta(days=1)
@@ -198,24 +201,25 @@ def main():
             aid   = article_id(entry)
             title = entry.get("title", "")
 
-            if aid in seen or aid in seen_run:
+            if aid in seen_run:
                 continue
 
             if article_pacific_date(entry) != target_date:
                 continue
 
             seen_run.add(aid)
-            seen.add(aid)
 
             # Score every article from the prior Pacific day, then rank them.
             print(f"  🤖 Scoring: {title[:70]}")
-            score_data = score_with_minimax(title)
+            estimate_data = estimate_with_minimax(title)
             scored += 1
 
-            if score_data is None:
-                score_data = {
-                    "score": 0,
-                    "reason": "AI unavailable; skipped from daily top 3",
+            if estimate_data is None:
+                estimate_data = {
+                    "move_pct_low": None,
+                    "move_pct_high": None,
+                    "confidence": "low",
+                    "reason": "AI unavailable; no reliable estimate",
                     "direction": "neutral",
                 }
 
@@ -226,27 +230,26 @@ def main():
 
             candidates.append({
                 "entry": entry,
-                "score_data": score_data,
-                "score": parse_score(score_data),
+                "estimate_data": estimate_data,
+                "rank": parse_move_pct(estimate_data) * parse_confidence(estimate_data.get("confidence", "")),
                 "published_dt": published_dt or datetime.min.replace(tzinfo=PACIFIC_TZ),
             })
 
-    candidates.sort(key=lambda item: (item["score"], item["published_dt"]), reverse=True)
+    candidates.sort(key=lambda item: (item["rank"], item["published_dt"]), reverse=True)
 
     for candidate in candidates[:MAX_DAILY_ALERTS]:
         entry = candidate["entry"]
-        score_data = candidate["score_data"]
+        estimate_data = candidate["estimate_data"]
         title = entry.get("title", "")
 
         try:
-            msg = format_message(entry, score_data)
+            msg = format_message(entry, estimate_data)
             send_telegram(msg)
             alerted += 1
-            print(f"  ✅ Alert sent (score {candidate['score']}): {title[:70]}")
+            print(f"  ✅ Alert sent (rank {candidate['rank']:.2f}): {title[:70]}")
         except Exception as e:
             print(f"  ⚠️  Telegram send failed: {e}")
 
-    save_seen(seen)
     print(
         f"\nDone — {alerted} alert(s) sent | "
         f"{scored} article(s) scored | "

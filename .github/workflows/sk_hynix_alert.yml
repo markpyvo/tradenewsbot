@@ -22,14 +22,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore seen-articles cache
-        uses: actions/cache@v4
-        with:
-          path: seen_articles.json
-          key: seen-articles-${{ github.run_id }}
-          restore-keys: |
-            seen-articles-
-
       - name: Run news checker
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -38,10 +30,3 @@ jobs:
           MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
           ALLOW_ANY_TIME: ${{ github.event_name == 'workflow_dispatch' }}
         run: python check_news.py
-
-      - name: Save seen-articles cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: seen_articles.json
-          key: seen-articles-${{ github.run_id }}
