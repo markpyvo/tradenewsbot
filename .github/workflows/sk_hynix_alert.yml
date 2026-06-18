@@ -2,7 +2,8 @@ name: SK Hynix News Alert
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 16 * * *"
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
 jobs:
@@ -35,6 +36,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
+          ALLOW_ANY_TIME: ${{ github.event_name == 'workflow_dispatch' }}
         run: python check_news.py
 
       - name: Save seen-articles cache

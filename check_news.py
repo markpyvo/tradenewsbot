@@ -3,7 +3,8 @@ import json
 import hashlib
 import requests
 import feedparser
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # ── Config ────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -11,8 +12,10 @@ TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
 MINIMAX_API_KEY     = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL") or "MiniMax-M3"
 MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
-MIN_ALERT_SCORE     = int(os.environ.get("MIN_ALERT_SCORE", "5"))
+ALLOW_ANY_TIME      = os.environ.get("ALLOW_ANY_TIME", "false").lower() == "true"
 SEEN_FILE           = "seen_articles.json"
+PACIFIC_TZ          = ZoneInfo("America/Los_Angeles")
+MAX_DAILY_ALERTS    = 3
 
 RSS_FEEDS = [
     "https://news.google.com/rss/search?q=SK+Hynix&hl=en-US&gl=US&ceid=US:en",
@@ -108,13 +111,19 @@ def score_with_minimax(title: str) -> dict:
 def article_id(entry) -> str:
     return hashlib.md5((entry.get("link") or entry.get("title", "")).encode()).hexdigest()
 
-def article_is_today(entry) -> bool:
+def article_pacific_date(entry):
     parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
     if not parsed:
-        return False
+        return None
 
-    published_date = datetime(*parsed[:6]).date()
-    return published_date == datetime.utcnow().date()
+    published_dt = datetime(*parsed[:6], tzinfo=timezone.utc)
+    return published_dt.astimezone(PACIFIC_TZ).date()
+
+def parse_score(score_data: dict) -> int:
+    try:
+        return int(score_data.get("score", 0))
+    except Exception:
+        return 0
 
 def load_seen() -> set:
     if os.path.exists(SEEN_FILE):
@@ -171,8 +180,17 @@ def format_message(entry, score_data: dict) -> str:
 def main():
     seen        = load_seen()
     alerted     = 0
-    filtered_ai = 0
-    fallback_ai = 0
+    scored      = 0
+
+    now_pacific = datetime.now(PACIFIC_TZ)
+    if not ALLOW_ANY_TIME and now_pacific.hour != 9:
+        print(f"  ⏭️  Not 9am Pacific yet ({now_pacific.strftime('%H:%M %Z')}); exiting")
+        save_seen(seen)
+        return
+
+    target_date = now_pacific.date() - timedelta(days=1)
+    candidates = []
+    seen_run = set()
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -180,47 +198,59 @@ def main():
             aid   = article_id(entry)
             title = entry.get("title", "")
 
-            if aid in seen:
+            if aid in seen or aid in seen_run:
                 continue
 
-            if not article_is_today(entry):
-                print(f"  ⏭️  Old article skip: {title[:70]}")
+            if article_pacific_date(entry) != target_date:
                 continue
 
-            # Always mark as seen so we don't re-process next run
+            seen_run.add(aid)
             seen.add(aid)
 
-            # MiniMax scoring for every same-day article.
+            # Score every article from the prior Pacific day, then rank them.
             print(f"  🤖 Scoring: {title[:70]}")
             score_data = score_with_minimax(title)
+            scored += 1
 
             if score_data is None:
-                fallback_ai += 1
                 score_data = {
-                    "score": "N/A",
-                    "reason": "AI unavailable; sending keyword alert",
+                    "score": 0,
+                    "reason": "AI unavailable; skipped from daily top 3",
                     "direction": "neutral",
                 }
-            elif score_data.get("score", 0) < MIN_ALERT_SCORE:
-                score = score_data.get("score", "err") if score_data else "err"
-                filtered_ai += 1
-                print(f"  ⏭️  AI skip (score {score}): {title[:70]}")
-                continue
 
-            # Passes both filters — send alert
-            try:
-                msg = format_message(entry, score_data)
-                send_telegram(msg)
-                alerted += 1
-                print(f"  ✅ Alert sent (score {score_data['score']}): {title[:70]}")
-            except Exception as e:
-                print(f"  ⚠️  Telegram send failed: {e}")
+            published_dt = None
+            parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+            if parsed:
+                published_dt = datetime(*parsed[:6], tzinfo=timezone.utc).astimezone(PACIFIC_TZ)
+
+            candidates.append({
+                "entry": entry,
+                "score_data": score_data,
+                "score": parse_score(score_data),
+                "published_dt": published_dt or datetime.min.replace(tzinfo=PACIFIC_TZ),
+            })
+
+    candidates.sort(key=lambda item: (item["score"], item["published_dt"]), reverse=True)
+
+    for candidate in candidates[:MAX_DAILY_ALERTS]:
+        entry = candidate["entry"]
+        score_data = candidate["score_data"]
+        title = entry.get("title", "")
+
+        try:
+            msg = format_message(entry, score_data)
+            send_telegram(msg)
+            alerted += 1
+            print(f"  ✅ Alert sent (score {candidate['score']}): {title[:70]}")
+        except Exception as e:
+            print(f"  ⚠️  Telegram send failed: {e}")
 
     save_seen(seen)
     print(
         f"\nDone — {alerted} alert(s) sent | "
-        f"{filtered_ai} AI-filtered | "
-        f"{fallback_ai} AI-fallback alert(s)"
+        f"{scored} article(s) scored | "
+        f"{len(candidates)} candidate(s) from yesterday"
     )
 
 
