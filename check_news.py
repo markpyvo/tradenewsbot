@@ -95,10 +95,8 @@ def score_with_minimax(title: str) -> dict:
     body = {
         "model": MINIMAX_MODEL,
         "max_tokens": 100,
-        "temperature": 0,
         "messages": [
-                {"role": "system", "content": SCORE_SYSTEM},
-                {"role": "user", "content": f"Headline: {title}"},
+            {"role": "user", "content": f"{SCORE_SYSTEM}\n\nHeadline: {title}"},
         ],
     }
     try:
