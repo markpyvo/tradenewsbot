@@ -11,6 +11,7 @@ TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
 MINIMAX_API_KEY     = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL") or "MiniMax-M3"
 MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
+MIN_ALERT_SCORE     = int(os.environ.get("MIN_ALERT_SCORE", "5"))
 SEEN_FILE           = "seen_articles.json"
 
 RSS_FEEDS = [
@@ -200,7 +201,7 @@ def main():
                     "reason": "AI unavailable; sending keyword alert",
                     "direction": "neutral",
                 }
-            elif score_data.get("score", 0) < 7:
+            elif score_data.get("score", 0) < MIN_ALERT_SCORE:
                 score = score_data.get("score", "err") if score_data else "err"
                 filtered_ai += 1
                 print(f"  ⏭️  AI skip (score {score}): {title[:70]}")
