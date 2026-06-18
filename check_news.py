@@ -19,39 +19,6 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=SK+Hynix+HBM+DRAM&hl=en-US&gl=US&ceid=US:en",
 ]
 
-# ── Step 1: Cheap keyword pre-filter (free, no API call) ─────────────────────
-# Only articles matching at least one keyword pass through to MiniMax scoring.
-SIGNAL_KEYWORDS = [
-    # Earnings & financials
-    "earnings", "revenue", "profit", "loss", "guidance", "forecast",
-    "dividend", "quarterly", "results", "operating income", "net income",
-
-    # Supply/demand & pricing (core SK Hynix drivers)
-    "dram", "nand", "hbm", "memory", "oversupply", "shortage",
-    "inventory", "pricing", "price hike", "price cut", "wafer",
-
-    # Big customers & deals
-    "nvidia", "apple", "amazon", "google", "microsoft", "hyperscaler",
-    "supply deal", "contract", "partnership", "customer",
-
-    # Macro / geopolitical
-    "export", "sanction", "restriction", "china", "chips act",
-    "tariff", "semiconductor policy", "korea", "subsidy",
-
-    # Analyst actions
-    "upgrade", "downgrade", "price target", "buy rating", "sell rating",
-    "overweight", "underweight", "goldman", "morgan stanley", "jpmorgan",
-
-    # M&A / strategic
-    "acquisition", "merger", "joint venture", "fab", "capacity",
-    "expansion", "plant", "shutdown", "investment", "capex",
-]
-
-def passes_keyword_filter(title: str) -> bool:
-    title_lower = title.lower()
-    return any(kw in title_lower for kw in SIGNAL_KEYWORDS)
-
-
 # ── Step 2: MiniMax scoring ──────────────────────────────────────────────────
 SCORE_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
 Your job is to assess whether a news headline about SK Hynix is likely to
@@ -203,7 +170,6 @@ def format_message(entry, score_data: dict) -> str:
 def main():
     seen        = load_seen()
     alerted     = 0
-    filtered_kw = 0
     filtered_ai = 0
     fallback_ai = 0
 
@@ -223,13 +189,7 @@ def main():
             # Always mark as seen so we don't re-process next run
             seen.add(aid)
 
-            # Step 1: keyword filter (free)
-            if not passes_keyword_filter(title):
-                filtered_kw += 1
-                print(f"  ⏭️  Keyword skip: {title[:70]}")
-                continue
-
-            # Step 2: MiniMax scoring
+            # MiniMax scoring for every same-day article.
             print(f"  🤖 Scoring: {title[:70]}")
             score_data = score_with_minimax(title)
 
@@ -258,7 +218,7 @@ def main():
     save_seen(seen)
     print(
         f"\nDone — {alerted} alert(s) sent | "
-        f"{filtered_kw} keyword-filtered | {filtered_ai} AI-filtered | "
+        f"{filtered_ai} AI-filtered | "
         f"{fallback_ai} AI-fallback alert(s)"
     )
 
