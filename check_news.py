@@ -8,7 +8,7 @@ from datetime import datetime
 # ── Config ────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
-ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]
+ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 SEEN_FILE           = "seen_articles.json"
 
 RSS_FEEDS = [
@@ -82,6 +82,10 @@ Low-score examples (1-3):
 
 def score_with_haiku(title: str) -> dict:
     """Call Claude Haiku 4.5 to score the headline. Returns score dict or None on error."""
+    if not ANTHROPIC_API_KEY:
+        print("  ⚠️  Anthropic API key missing; using fallback alert")
+        return None
+
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
@@ -91,7 +95,17 @@ def score_with_haiku(title: str) -> dict:
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 100,
         "system": HAIKU_SYSTEM,
-        "messages": [{"role": "user", "content": f"Headline: {title}"}],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Headline: {title}",
+                    }
+                ],
+            }
+        ],
     }
     try:
         r = requests.post(
@@ -106,7 +120,13 @@ def score_with_haiku(title: str) -> dict:
         raw = raw.replace("```json", "").replace("```", "").strip()
         return json.loads(raw)
     except Exception as e:
-        print(f"  ⚠️  Haiku scoring failed: {e}")
+        response_text = ""
+        if isinstance(e, requests.HTTPError) and e.response is not None:
+            response_text = e.response.text.strip()
+        if response_text:
+            print(f"  ⚠️  Haiku scoring failed: {e} | {response_text}")
+        else:
+            print(f"  ⚠️  Haiku scoring failed: {e}")
         return None
 
 
@@ -172,6 +192,7 @@ def main():
     alerted     = 0
     filtered_kw = 0
     filtered_ai = 0
+    fallback_ai = 0
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -195,7 +216,14 @@ def main():
             print(f"  🤖 Scoring: {title[:70]}")
             score_data = score_with_haiku(title)
 
-            if score_data is None or score_data.get("score", 0) < 7:
+            if score_data is None:
+                fallback_ai += 1
+                score_data = {
+                    "score": "N/A",
+                    "reason": "AI unavailable; sending keyword alert",
+                    "direction": "neutral",
+                }
+            elif score_data.get("score", 0) < 7:
                 score = score_data.get("score", "err") if score_data else "err"
                 filtered_ai += 1
                 print(f"  ⏭️  AI skip (score {score}): {title[:70]}")
@@ -213,7 +241,8 @@ def main():
     save_seen(seen)
     print(
         f"\nDone — {alerted} alert(s) sent | "
-        f"{filtered_kw} keyword-filtered | {filtered_ai} AI-filtered"
+        f"{filtered_kw} keyword-filtered | {filtered_ai} AI-filtered | "
+        f"{fallback_ai} AI-fallback alert(s)"
     )
 
 
