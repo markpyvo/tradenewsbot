@@ -99,12 +99,7 @@ def score_with_haiku(title: str) -> dict:
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Headline: {title}",
-                    }
-                ],
+                "content": f"Headline: {title}",
             }
         ],
     }
