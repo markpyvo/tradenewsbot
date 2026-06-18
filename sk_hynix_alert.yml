@@ -33,7 +33,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          MINIMAX_API_KEY:    ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_MODEL:      ${{ secrets.MINIMAX_MODEL }}
         run: python check_news.py
 
       - name: Save seen-articles cache
