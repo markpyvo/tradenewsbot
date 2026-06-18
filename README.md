@@ -9,7 +9,8 @@ SK Hynix news alerts from Google News RSS, filtered locally and sent to Telegram
 3. Add these GitHub Actions secrets:
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
-	- `ANTHROPIC_API_KEY`
+	- `MINIMAX_API_KEY`
+	- `MINIMAX_MODEL` if you want to override the default `MiniMax-M3`
 4. Push the repo and run the workflow at `.github/workflows/sk_hynix_alert.yml`.
 
 ## Local run
@@ -18,11 +19,12 @@ SK Hynix news alerts from Google News RSS, filtered locally and sent to Telegram
 cp .env.example .env
 # fill in the values in .env, then load them in your shell
 pip install -r requirements.txt
-TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... ANTHROPIC_API_KEY=... python check_news.py
+TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... MINIMAX_API_KEY=... MINIMAX_MODEL=MiniMax-M3 python check_news.py
 ```
 
 Required variables:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `ANTHROPIC_API_KEY`
+- `MINIMAX_API_KEY`
+- `MINIMAX_MODEL` is optional and defaults to `MiniMax-M3`

@@ -8,8 +8,9 @@ from datetime import datetime
 # ── Config ────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]
-ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL     = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
+MINIMAX_API_KEY     = os.environ.get("MINIMAX_API_KEY", "")
+MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL", "MiniMax-M3")
+MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
 SEEN_FILE           = "seen_articles.json"
 
 RSS_FEEDS = [
@@ -19,7 +20,7 @@ RSS_FEEDS = [
 ]
 
 # ── Step 1: Cheap keyword pre-filter (free, no API call) ─────────────────────
-# Only articles matching at least one keyword pass through to Claude scoring.
+# Only articles matching at least one keyword pass through to MiniMax scoring.
 SIGNAL_KEYWORDS = [
     # Earnings & financials
     "earnings", "revenue", "profit", "loss", "guidance", "forecast",
@@ -51,8 +52,8 @@ def passes_keyword_filter(title: str) -> bool:
     return any(kw in title_lower for kw in SIGNAL_KEYWORDS)
 
 
-# ── Step 2: Claude Haiku scoring ($0.000001 per headline) ────────────────────
-HAIKU_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
+# ── Step 2: MiniMax scoring ──────────────────────────────────────────────────
+SCORE_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
 Your job is to assess whether a news headline about SK Hynix is likely to
 materially move its stock price (up or down).
 
@@ -81,38 +82,35 @@ Low-score examples (1-3):
 - Minor executive quotes
 - Unrelated market roundups"""
 
-def score_with_haiku(title: str) -> dict:
-    """Call Claude Haiku 4.5 to score the headline. Returns score dict or None on error."""
-    if not ANTHROPIC_API_KEY:
-        print("  ⚠️  Anthropic API key missing; using fallback alert")
+def score_with_minimax(title: str) -> dict:
+    """Call MiniMax to score the headline. Returns score dict or None on error."""
+    if not MINIMAX_API_KEY:
+        print("  ⚠️  MiniMax API key missing; using fallback alert")
         return None
 
     headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
+        "Authorization": f"Bearer {MINIMAX_API_KEY}",
         "content-type": "application/json",
     }
     body = {
-        "model": ANTHROPIC_MODEL,
+        "model": MINIMAX_MODEL,
         "max_tokens": 100,
-        "system": HAIKU_SYSTEM,
+        "temperature": 0,
         "messages": [
-            {
-                "role": "user",
-                "content": f"Headline: {title}",
-            }
+                {"role": "system", "content": SCORE_SYSTEM},
+                {"role": "user", "content": f"Headline: {title}"},
         ],
     }
     try:
         r = requests.post(
-            "https://api.anthropic.com/v1/messages",
+            MINIMAX_API_URL,
             headers=headers,
             json=body,
             timeout=15,
         )
         r.raise_for_status()
-        raw = r.json()["content"][0]["text"].strip()
-        # Strip markdown fences if present
+        data = r.json()
+        raw = data["choices"][0]["message"]["content"].strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
         return json.loads(raw)
     except Exception as e:
@@ -120,9 +118,9 @@ def score_with_haiku(title: str) -> dict:
         if isinstance(e, requests.HTTPError) and e.response is not None:
             response_text = e.response.text.strip()
         if response_text:
-            print(f"  ⚠️  Haiku scoring failed: {e} | {response_text}")
+            print(f"  ⚠️  MiniMax scoring failed: {e} | {response_text}")
         else:
-            print(f"  ⚠️  Haiku scoring failed: {e}")
+            print(f"  ⚠️  MiniMax scoring failed: {e}")
         return None
 
 
@@ -208,9 +206,9 @@ def main():
                 print(f"  ⏭️  Keyword skip: {title[:70]}")
                 continue
 
-            # Step 2: Claude Haiku scoring
+            # Step 2: MiniMax scoring
             print(f"  🤖 Scoring: {title[:70]}")
-            score_data = score_with_haiku(title)
+            score_data = score_with_minimax(title)
 
             if score_data is None:
                 fallback_ai += 1
