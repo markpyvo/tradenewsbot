@@ -140,6 +140,14 @@ def score_with_minimax(title: str) -> dict:
 def article_id(entry) -> str:
     return hashlib.md5((entry.get("link") or entry.get("title", "")).encode()).hexdigest()
 
+def article_is_today(entry) -> bool:
+    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    if not parsed:
+        return False
+
+    published_date = datetime(*parsed[:6]).date()
+    return published_date == datetime.utcnow().date()
+
 def load_seen() -> set:
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
@@ -206,6 +214,10 @@ def main():
             title = entry.get("title", "")
 
             if aid in seen:
+                continue
+
+            if not article_is_today(entry):
+                print(f"  ⏭️  Old article skip: {title[:70]}")
                 continue
 
             # Always mark as seen so we don't re-process next run
