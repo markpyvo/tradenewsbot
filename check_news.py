@@ -96,7 +96,8 @@ def score_with_minimax(title: str) -> dict:
         "model": MINIMAX_MODEL,
         "max_tokens": 100,
         "messages": [
-            {"role": "user", "content": f"{SCORE_SYSTEM}\n\nHeadline: {title}"},
+            {"role": "system", "content": SCORE_SYSTEM},
+            {"role": "user", "content": f"Headline: {title}"},
         ],
     }
     try:
@@ -108,9 +109,21 @@ def score_with_minimax(title: str) -> dict:
         )
         r.raise_for_status()
         data = r.json()
-        raw = data["choices"][0]["message"]["content"].strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        raw = data["choices"][0]["message"]["content"]
+        if isinstance(raw, list):
+            raw = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in raw
+            )
+        raw = str(raw).strip().replace("```json", "").replace("```", "").strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(raw[start : end + 1])
+            raise
     except Exception as e:
         response_text = ""
         if isinstance(e, requests.HTTPError) and e.response is not None:
