@@ -3,6 +3,7 @@ import json
 import hashlib
 import requests
 import feedparser
+from urllib.parse import quote_plus
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -14,21 +15,37 @@ MINIMAX_MODEL       = os.environ.get("MINIMAX_MODEL") or "MiniMax-M3"
 MINIMAX_API_URL     = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1/chat/completions")
 ALLOW_ANY_TIME      = os.environ.get("ALLOW_ANY_TIME", "false").lower() == "true"
 PACIFIC_TZ          = ZoneInfo("America/Los_Angeles")
-MAX_DAILY_ALERTS    = 3
+MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_ALERTS", "3"))
+
+STOCK_NAME = os.environ.get("STOCK_NAME", "").strip()
+if not STOCK_NAME:
+    raise SystemExit(
+        "STOCK_NAME is not set. Set it to the company or ticker you want news "
+        "alerts for, e.g. STOCK_NAME='Nvidia' or STOCK_NAME='NVDA'."
+    )
+
+# A third, more specific search term (e.g. a product line or segment).
+# Defaults to earnings/guidance coverage if not set.
+STOCK_EXTRA_QUERY = os.environ.get("STOCK_EXTRA_QUERY", f"{STOCK_NAME} earnings")
+
+def _rss_url(query: str) -> str:
+    return f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
 
 RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=SK+Hynix&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=SK+Hynix+stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=SK+Hynix+HBM+DRAM&hl=en-US&gl=US&ceid=US:en",
+    _rss_url(STOCK_NAME),
+    _rss_url(f"{STOCK_NAME} stock"),
+    _rss_url(STOCK_EXTRA_QUERY),
 ]
 
 # ── Step 2: MiniMax move estimate ────────────────────────────────────────────
-ESTIMATE_SYSTEM = """You are a financial analyst specializing in semiconductor stocks.
-Your job is to estimate how much a news headline about SK Hynix could move the
+ESTIMATE_SYSTEM = f"""You are a financial analyst who specializes in estimating how
+much a news headline could move a stock's price over the next trading session.
+
+Your job is to estimate how much a news headline about {STOCK_NAME} could move the
 stock price over the next trading session.
 
 Respond ONLY with a JSON object like:
-{"direction": "bullish", "move_pct_low": 0.8, "move_pct_high": 1.4, "confidence": "medium", "reason": "one-line reason"}
+{{"direction": "bullish", "move_pct_low": 0.8, "move_pct_high": 1.4, "confidence": "medium", "reason": "one-line reason"}}
 
 Rules:
 - move_pct_low and move_pct_high are absolute percent move estimates, not signed
@@ -170,7 +187,7 @@ def format_message(entry, estimate_data: dict) -> str:
     emoji     = DIRECTION_EMOJI.get(direction, "⚪")
 
     return (
-        f"🚨 <b>SK Hynix Major News Alert</b>\n\n"
+        f"🚨 <b>{STOCK_NAME} Major News Alert</b>\n\n"
         f"<b>{title}</b>\n\n"
         f"{emoji} <b>{direction.capitalize()}</b> · {format_move_estimate(estimate_data)}\n"
         f"{('Confidence: ' + str(confidence).capitalize()) if confidence else ''}\n"

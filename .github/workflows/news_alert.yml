@@ -1,4 +1,4 @@
-name: SK Hynix News Alert
+name: Stock News Alert
 
 on:
   schedule:
@@ -28,5 +28,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
+          STOCK_NAME: ${{ vars.STOCK_NAME }}
+          STOCK_EXTRA_QUERY: ${{ vars.STOCK_EXTRA_QUERY }}
           ALLOW_ANY_TIME: ${{ github.event_name == 'workflow_dispatch' }}
         run: python check_news.py
